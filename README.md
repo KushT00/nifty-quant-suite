@@ -94,7 +94,7 @@ nifty-quant-suite/
 ├── option-buying/                          # Strategy 1: Directional Option Buying
 │   ├── option_buying.py                    #   Live trading engine (OpenAlgo SDK)
 │   ├── strategy_logic.md                   #   Complete signal & TSL logic document
-│   └── report.html                         #   Interactive backtest performance report
+
 │
 ├── option-selling/                         # Strategy 2: Multi-Leg Option Selling
 │   ├── nifty_weekly_master.py              #   Live regime-adaptive weekly engine
