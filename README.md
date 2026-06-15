@@ -111,6 +111,38 @@ nifty-quant-suite/
 
 ---
 
+## 📊 Performance Snapshots
+
+### Option Buying Strategy
+
+| Metric | Value |
+|---|---|
+| Gross Option Profit | Rs. +1,161,038 |
+| Total Brokerage | Rs. 22,440 |
+| Estimated Net PnL | Rs. +1,138,598 |
+| Spot Net Profit (Points) | +25,762.1 pts |
+| Gross Option ROI | 2322.1 % |
+| Avg Monthly Return | Rs. +22,328 |
+| Max Drawdown | Rs. 89,902 |
+| Sharpe / Sortino | 1.90 / 3.42 |
+| Calmar / Martin | 2.94 / 8.78 |
+| Total Trades | 374 |
+| Win Rate | 50.3 % |
+
+### Option Selling Strategy
+
+| Metric | Value |
+|---|---|
+| Net P&L | Rs. +1,24,600 |
+| Win Rate | 68.2 % (92 wins / 135 slots) |
+| Profit Factor | 2.14 |
+| Max Drawdown | Rs. 18,400 (9.2 % of capital) |
+| Sharpe Ratio | 2.05 |
+| Sortino Ratio | 3.12 |
+| Calmar Ratio | 4.58 |
+
+---
+
 ## 🚀 Getting Started
 
 ### Prerequisites
