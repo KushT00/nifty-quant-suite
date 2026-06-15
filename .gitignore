@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Data files (too large for GitHub)
+*.csv
+*.xlsx
+
+# Generated outputs
+equity_curve.png
+trade_log.csv
+
+# State files (contain API keys / runtime state)
+*_state.json
+*_audit.csv
+*_trades.csv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Virtual environments
+venv/
+.env/

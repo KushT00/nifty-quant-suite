@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nifty Quant Suite — Portfolio Analytics Dashboard</title>
+    <meta name="description" content="Interactive analytical dashboard for the Nifty Quant Suite — a quantitative options trading platform covering directional buying, multi-leg selling, and Black-Scholes simulation engines.">
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- ─── Header ─── -->
+        <header class="header">
+            <div class="header-brand">
+                <h1>Nifty Quant Suite</h1>
+                <p>Portfolio Analytics Dashboard — Options Buying · Selling · Simulation</p>
+            </div>
+            <div class="header-badge">
+                <span class="dot"></span>
+                Quantitative Options Trading Platform
+            </div>
+        </header>
+
+        <!-- ─── Strategy Tabs ─── -->
+        <div class="tabs" id="strategyTabs">
+            <button class="tab-btn active" data-strategy="buying">Option Buying</button>
+            <button class="tab-btn" data-strategy="selling">Option Selling</button>
+            <button class="tab-btn" data-strategy="simulation">BS Simulation</button>
+        </div>
+
+        <!-- ─── Key Metrics Row ─── -->
+        <div class="grid-4" id="metricsGrid">
+            <div class="card">
+                <div class="card-title">Net P&L</div>
+                <div class="card-value val-profit" id="metricPnl">—</div>
+                <div class="card-subtitle" id="metricPnlSub">After all costs & slippage</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Win Rate</div>
+                <div class="card-value val-info" id="metricWinRate">—</div>
+                <div class="card-subtitle" id="metricWinRateSub">Winning / Total trades</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Profit Factor</div>
+                <div class="card-value val-warn" id="metricPF">—</div>
+                <div class="card-subtitle">Gross Profit / Gross Loss</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Max Drawdown</div>
+                <div class="card-value val-loss" id="metricDD">—</div>
+                <div class="card-subtitle" id="metricDDSub">Peak-to-trough decline</div>
+            </div>
+        </div>
+
+        <!-- ─── Equity Curve + Exit Analysis ─── -->
+        <div class="grid-2">
+            <div class="card">
+                <div class="card-header">
+                    <h2 style="font-size:1.1rem;font-weight:700;">Equity Curve</h2>
+                    <span class="tag tag-simulation" id="curveTag">Simulation</span>
+                </div>
+                <div class="chart-wrap">
+                    <canvas id="equityChart"></canvas>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <h2 style="font-size:1.1rem;font-weight:700;">Exit Breakdown</h2>
+                </div>
+                <div id="exitBreakdown">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+        </div>
+
+        <!-- ─── Risk-Adjusted Ratios ─── -->
+        <div class="grid-3">
+            <div class="card">
+                <div class="card-title">Sharpe Ratio</div>
+                <div class="card-value val-profit" id="metricSharpe">—</div>
+                <div class="card-subtitle">Annualized risk-adjusted return</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Sortino Ratio</div>
+                <div class="card-value val-profit" id="metricSortino">—</div>
+                <div class="card-subtitle">Downside deviation adjusted</div>
+            </div>
+            <div class="card">
+                <div class="card-title">Calmar Ratio</div>
+                <div class="card-value val-warn" id="metricCalmar">—</div>
+                <div class="card-subtitle">Return / Max Drawdown</div>
+            </div>
+        </div>
+
+        <!-- ─── Dual-Audience Explainer ─── -->
+        <div class="card" style="margin-bottom:1.75rem;">
+            <div class="card-header">
+                <h2 style="font-size:1.1rem;font-weight:700;">How This System Works</h2>
+            </div>
+
+            <div class="explainer-tabs">
+                <button class="explainer-tab active" data-target="techExplain">For Software Engineers</button>
+                <button class="explainer-tab" data-target="tradeExplain">For Traders & PMs</button>
+            </div>
+
+            <div id="techExplain" class="explainer-content active">
+                <p class="explain-text">
+                    <strong>The core challenge is data dimensionality.</strong> Unlike equity backtesting (2D: time × price),
+                    options exist in a <strong>7-dimensional manifold</strong>:
+                    Spot (<code>S</code>), Strike (<code>K</code>), Time-to-Expiry (<code>τ</code>),
+                    Volatility (<code>σ</code>), Risk-Free Rate (<code>r</code>), Option Bias (<code>CE/PE</code>),
+                    and Liquidity (<code>OI</code>). This generates a <strong>120× data volume expansion</strong>
+                    per timestamp compared to spot-only systems.
+                </p>
+                <div class="formula-block">
+<span class="highlight">O(premium)</span> = f(<span class="param">S_t</span>, <span class="param">K</span>, <span class="param">τ</span>, <span class="param">σ</span>, <span class="param">r</span>, <span class="param">Bias</span>, <span class="param">Liquidity</span>)
+
+<span class="warn">Data Scale:</span> 75 bars/day × 60 strikes × 2 types = <span class="highlight">9,000 rows/day/expiry</span>
+              250 trading days × 18,000 rows = <span class="highlight">4.5M rows/year</span>
+                </div>
+                <p class="explain-text">
+                    <strong>Architecture decisions:</strong> We implemented a <strong>lazy-loaded daily cache</strong> system
+                    (<code>OptionDataLoader</code>) that loads each day's multi-strike CSV once and serves all subsequent
+                    bar-level lookups from memory. The <strong>Black-Scholes pricer</strong> is implemented from scratch
+                    (no QuantLib or ta-lib) for zero-dependency portability. The live engines use <strong>candle-boundary
+                    synchronization</strong> — firing evaluations exactly 2 seconds after each 5m close to avoid stale data.
+                    On startup, the buying engine <strong>replays 5 days of history</strong> step-by-step to reconstruct
+                    indicator state (warm start), eliminating cold-start blind spots.
+                </p>
+            </div>
+
+            <div id="tradeExplain" class="explainer-content">
+                <p class="explain-text">
+                    <strong>Three distinct strategies covering the full options spectrum:</strong>
+                </p>
+                <p class="explain-text">
+                    <strong>1. Option Buying (Directional):</strong> Uses a triple-confirmation system
+                    (SMA crossover + EMA regime filter + distance check) to identify high-probability
+                    trend entries. Buys weekly options closest to ₹200 premium (sweet spot for
+                    delta exposure vs. time decay). Protects with a two-phase trailing stop loss
+                    on the underlying spot — initial fixed SL of 0.75%, then dynamic trailing once
+                    profit exceeds 0.75%. Capital required: <strong>~₹13,000/lot</strong>.
+                </p>
+                <p class="explain-text">
+                    <strong>2. Option Selling (Theta Harvest):</strong> A regime-adaptive system that
+                    classifies the market into Ranging/Grey/Trending using <strong>Wilder's ADX</strong>,
+                    then deploys the optimal multi-leg structure: Iron Condors for ranging markets,
+                    Ratio Butterflies for trending markets, and Batman Spreads for high-IV ranging.
+                    Monitors positions using <strong>delta-adjusted premium stops</strong>, ITM breach
+                    exits, and a weekly circuit breaker. Capital required: <strong>~₹1.5L–2L/lot</strong>.
+                </p>
+                <p class="explain-text">
+                    <strong>3. Options Simulation (Backtesting):</strong> When historical tick-level
+                    option data isn't available, this engine <strong>synthesizes option premiums</strong>
+                    using Black-Scholes with VIX-derived volatility. Models all Indian market costs
+                    (STT, GST, Exchange charges, SEBI fees, slippage). Produces Sharpe/Sortino/Calmar
+                    ratios, monthly P&L heatmaps, and interactive equity curves across 3+ years.
+                </p>
+            </div>
+        </div>
+
+        <!-- ─── Monthly P&L Heatmap ─── -->
+        <div class="card" style="margin-bottom:1.75rem; overflow-x:auto;">
+            <div class="card-header">
+                <h2 style="font-size:1.1rem;font-weight:700;">Monthly P&L Heatmap</h2>
+            </div>
+            <table class="heatmap-table" id="heatmapTable">
+                <thead>
+                    <tr>
+                        <th style="text-align:left;">Year</th>
+                        <th>Jan</th><th>Feb</th><th>Mar</th><th>Apr</th><th>May</th><th>Jun</th>
+                        <th>Jul</th><th>Aug</th><th>Sep</th><th>Oct</th><th>Nov</th><th>Dec</th>
+                        <th style="font-weight:800;">Total</th>
+                    </tr>
+                </thead>
+                <tbody id="heatmapBody">
+                    <!-- Populated by JS -->
+                </tbody>
+            </table>
+        </div>
+
+        <!-- ─── Footer ─── -->
+        <footer style="text-align:center; padding:2rem 0; border-top:1px solid var(--border-subtle);">
+            <p style="color:var(--text-tertiary); font-size:0.8rem;">
+                Built by <strong style="color:var(--text-secondary);">Kush Tejani</strong> —
+                Quantitative Developer · Options Trader · Systems Engineer
+            </p>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
