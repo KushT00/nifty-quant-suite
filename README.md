@@ -10,7 +10,7 @@
 <p align="center"><b>A comprehensive quantitative options trading and backtesting platform for the Indian derivatives market (NSE Nifty 50)</b></p>
 
 <p align="center">
-  <i>Three production-grade algorithmic strategies spanning directional option buying, multi-leg option selling, and historical options simulation — unified under a single analytical framework with real-time Black-Scholes pricing, dynamic Greek risk management, and institutional-grade execution logic.</i>
+  <i>Two production-grade algorithmic strategies spanning directional option buying and multi-leg option selling — unified under a single analytical framework with real-time Black-Scholes pricing, dynamic Greek risk management, and institutional-grade execution logic.</i>
 </p>
 
 ---
@@ -21,7 +21,6 @@
 - [Black-Scholes Modeling & Greek Risk Engine](#black-scholes-modeling--greek-risk-engine)
 - [Strategy 1 — Option Buying: Nifty 5m Triple Confirm](#strategy-1--option-buying-nifty-5m-triple-confirm)
 - [Strategy 2 — Option Selling: Nifty Weekly Master](#strategy-2--option-selling-nifty-weekly-master)
-- [Strategy 3 — Options Simulation: Black-Scholes Backtesting Engine](#strategy-3--options-simulation-black-scholes-backtesting-engine)
 - [Capital Requirements & ROI Modeling](#capital-requirements--roi-modeling)
 - [System Architecture](#system-architecture)
 - [Project Structure](#project-structure)
@@ -65,15 +64,7 @@ For a single trading day on Nifty 5-minute candles:
 - **Multi-expiry**: Current week + next week = **~18,000 rows/day**
 - **Annual dataset**: 250 trading days × 18,000 = **4.5 million rows/year**
 
-This is a **120× data volume expansion** compared to spot-only backtesting. Our engines solve this through:
-
-1. **Lazy-loaded daily caches** — The `OptionDataLoader` class (in `options-simulation/`) loads each day's multi-strike CSV once, caches it in memory, and serves subsequent lookups from cache. This eliminates redundant disk I/O when the backtest loop queries the same day across multiple bars.
-
-2. **Black-Scholes imputation** — When historical option tick data is unavailable (pre-2024 or gaps), the simulation engine synthesizes option premiums mathematically using the Black-Scholes formula with VIX-derived implied volatility. This allows backtesting across **3+ years** of data without requiring the full 4.5M-row option dataset.
-
-3. **Strike selection algorithms** — Instead of loading all 120 contracts, our engines use targeted search:
-   - **Premium-targeted search**: Scan strikes to find the one whose LTP is closest to ₹200 (buying strategy) or within a ₹10-25 band (selling strategy).
-   - **ATM rounding**: `round(spot / 50) × 50` for instant ATM strike resolution without chain iteration.
+This is a **120× data volume expansion** compared to spot-only backtesting. Our engines solve this through targeted **strike selection algorithms** — instead of loading all 120 contracts, our engines scan strikes dynamically to find the one whose LTP is closest to ₹200 (buying strategy) or within a ₹10-25 band (selling strategy), resolving the ATM strike instantly with `round(spot / 50) × 50`.
 
 ---
 
@@ -230,59 +221,6 @@ flowchart TD
 - **Position Greeks aggregation**: Aggregates $\Delta$, $\Theta$, $\mathcal{V}$ across all active legs (handling BUY as positive and SELL as negative multipliers) for portfolio-level risk monitoring.
 - **Expiry-day rolling engine**: Actively monitors short legs for 80% decay (profit roll) or 3× spike (defensive roll), scanning for replacement strikes in the ₹10-18 premium band.
 
----
-
-## Strategy 3 — Options Simulation: Black-Scholes Backtesting Engine
-
-> **Engine**: [`options-simulation/spottest.py`](options-simulation/spottest.py) | **Report**: [`options-simulation/report.html`](options-simulation/report.html)
-
-A **historical backtesting engine** that simulates Nifty weekly Call option trades using Black-Scholes pricing when historical option tick data isn't available. This enables backtesting across **3+ years** of data (2022–present) using only spot index candles and VIX data.
-
-### How It Works
-
-```mermaid
-flowchart LR
-    A["Nifty Spot 5m OHLC\n(2022-Present)"] --> B["Supertrend\nSignal Engine"]
-    C["India VIX\nDaily Close"] --> D["σ = VIX / 100"]
-    
-    B --> E{"Supertrend\nBullish Flip?"}
-    E -- Yes --> F["Find Strike Near ₹200\nvia BS Formula"]
-    
-    D --> F
-    F --> G["Compute Entry Premium\nC(S, K, τ, r, σ)"]
-    G --> H["Compute Delta-Adjusted\nSL & TP Premiums"]
-    
-    H --> I["Simulate Bar-by-Bar\nPremium Evolution"]
-    I --> J{"SL/TP/Reversal/\nSquareoff Hit?"}
-    J -- Yes --> K["Record Trade\nwith Realistic Costs"]
-    K --> L["STT + GST + Exchange\n+ SEBI + Slippage"]
-    
-    J -- No --> I
-```
-
-### Realistic Cost Modeling (Indian Market Microstructure)
-
-The engine models every friction layer of NSE option trading:
-
-| Cost Component | Rate | Scaling |
-|:---|:---|:---|
-| **Slippage** | 0.3 pts/order × 2 orders | Per contract (lot size) |
-| **Brokerage** | ₹20 flat/order × 2 | Fixed (does not scale) |
-| **Exchange Transaction Charge** | 0.053% of premium value | Per contract |
-| **Securities Transaction Tax (STT)** | 0.0625% on sell-side premium | Per contract |
-| **GST** | 18% on (brokerage + exchange charges) | Derived |
-| **SEBI Turnover Fee + Stamp Duty** | ~0.003% of buy-side premium | Per contract |
-
-### Performance Metrics Generated
-
-The engine produces a comprehensive HTML dashboard with:
-- **Equity Curve** (Chart.js interactive line chart with gradient fill)
-- **Monthly P&L Heatmap Matrix** (multi-year grid, color-coded green/red)
-- **Risk-Adjusted Ratios**: Sharpe, Sortino, Calmar, Max Drawdown (%), Max Drawdown Duration (days)
-- **Win/Loss Streaks** and **Profit Factor** analysis
-- **Exit Reason Distribution** (SL, TP, Reversal, Intraday Squareoff breakdowns)
-
----
 
 ## Capital Requirements & ROI Modeling
 
@@ -304,9 +242,7 @@ The engine produces a comprehensive HTML dashboard with:
 ```mermaid
 graph TB
     subgraph "Data Layer"
-        A["Nifty Spot 5m OHLC CSV"]
-        B["India VIX Daily CSV"]
-        C["Historical Option Chain CSVs\n(Year/Month/Expiry/Date)"]
+        A["Historical VIX CSV (regime reference)"]
         D["Live OpenAlgo API Feed"]
     end
     
@@ -314,13 +250,12 @@ graph TB
         E["Black-Scholes Pricer\nnormal_cdf → d1/d2 → C(S,K,τ,r,σ)"]
         F["Greeks Engine\nΔ, Θ, V per leg → Portfolio Σ"]
         G["Wilder's ADX\nTR → ±DM → DI → DX → ADX"]
-        H["Technical Indicators\nSMA, EMA, RMA, Supertrend"]
+        H["Technical Indicators\nSMA, EMA, RMA"]
     end
     
     subgraph "Strategy Engines"
         I["Option Buying\n5m Triple Confirm\nTrend + Pullback + TSL"]
         J["Option Selling\nWeekly Master\nRegime → Structure → Risk"]
-        K["Options Simulation\nBS Backtest Engine\nHistorical P&L + Costs"]
     end
     
     subgraph "Risk & Execution"
@@ -338,13 +273,12 @@ graph TB
         T["State JSON\nPersistent across restarts"]
     end
     
-    A & B --> H & K
-    C --> K
+    A --> J
     D --> I & J
-    E & F --> J & K & L
+    E & F --> J & L
     G & H --> I & J
-    I & J & K --> L & M & N & O & P
-    I & J & K --> Q & R & S & T
+    I & J --> L & M & N & O & P
+    I & J --> Q & R & S & T
 ```
 
 ---
@@ -362,10 +296,6 @@ nifty-quant-suite/
 ├── option-selling/                         # Strategy 2: Multi-Leg Option Selling
 │   ├── nifty_weekly_master.py              #   Live regime-adaptive weekly engine
 │   └── README.md                           #   Exhaustive trade rules & decision trees
-│
-├── options-simulation/                     # Strategy 3: Historical BS Backtesting
-│   ├── spottest.py                         #   Simulated options backtest engine
-│   └── report.html                         #   Performance dashboard (Sharpe, Sortino, etc.)
 │
 ├── dashboard/                              # Unified Portfolio Analytics UI
 │   ├── index.html                          #   Glassmorphic dark-mode dashboard
@@ -386,13 +316,6 @@ nifty-quant-suite/
 pip install -r requirements.txt
 ```
 
-### Running the Backtesting Engine
-
-```bash
-cd options-simulation
-python spottest.py
-# Generates: trade_log.csv, equity_curve.png, report.html
-```
 
 ### Running the Live Strategies
 

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Nifty Quant Suite — Portfolio Analytics Dashboard</title>
-    <meta name="description" content="Interactive analytical dashboard for the Nifty Quant Suite — a quantitative options trading platform covering directional buying, multi-leg selling, and Black-Scholes simulation engines.">
+    <meta name="description" content="Interactive analytical dashboard for the Nifty Quant Suite — a quantitative options trading platform covering directional buying and multi-leg selling.">
     <link rel="stylesheet" href="style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
@@ -14,7 +14,7 @@
         <header class="header">
             <div class="header-brand">
                 <h1>Nifty Quant Suite</h1>
-                <p>Portfolio Analytics Dashboard — Options Buying · Selling · Simulation</p>
+                <p>Portfolio Analytics Dashboard — Options Buying · Selling</p>
             </div>
             <div class="header-badge">
                 <span class="dot"></span>
@@ -26,7 +26,6 @@
         <div class="tabs" id="strategyTabs">
             <button class="tab-btn active" data-strategy="buying">Option Buying</button>
             <button class="tab-btn" data-strategy="selling">Option Selling</button>
-            <button class="tab-btn" data-strategy="simulation">BS Simulation</button>
         </div>
 
         <!-- ─── Key Metrics Row ─── -->
@@ -58,7 +57,7 @@
             <div class="card">
                 <div class="card-header">
                     <h2 style="font-size:1.1rem;font-weight:700;">Equity Curve</h2>
-                    <span class="tag tag-simulation" id="curveTag">Simulation</span>
+                    <span class="tag tag-buying" id="curveTag">Buying</span>
                 </div>
                 <div class="chart-wrap">
                     <canvas id="equityChart"></canvas>
@@ -132,7 +131,7 @@
 
             <div id="tradeExplain" class="explainer-content">
                 <p class="explain-text">
-                    <strong>Three distinct strategies covering the full options spectrum:</strong>
+                    <strong>Two distinct strategies covering the options spectrum:</strong>
                 </p>
                 <p class="explain-text">
                     <strong>1. Option Buying (Directional):</strong> Uses a triple-confirmation system
@@ -150,13 +149,7 @@
                     Monitors positions using <strong>delta-adjusted premium stops</strong>, ITM breach
                     exits, and a weekly circuit breaker. Capital required: <strong>~₹1.5L–2L/lot</strong>.
                 </p>
-                <p class="explain-text">
-                    <strong>3. Options Simulation (Backtesting):</strong> When historical tick-level
-                    option data isn't available, this engine <strong>synthesizes option premiums</strong>
-                    using Black-Scholes with VIX-derived volatility. Models all Indian market costs
-                    (STT, GST, Exchange charges, SEBI fees, slippage). Produces Sharpe/Sortino/Calmar
-                    ratios, monthly P&L heatmaps, and interactive equity curves across 3+ years.
-                </p>
+
             </div>
         </div>
 
