@@ -1,6 +1,6 @@
 # Nifty Weekly Master Strategy — Strategy Manual & Trade Rules (v2.1 Precision)
 
-This document provides a comprehensive, itemized reference for every trading case, execution gate, and entry/exit condition implemented in [nifty_weekly_master.py](file:///c:/Users/Kush%20Tejani/Downloads/openalgo_v2.1/openalgo/nifty_weekly_master.py).
+This document serves as a simplified, itemized reference for the trading cases, execution gates, and entry/exit conditions implemented in [nifty_weekly_master.py](file:///c:/Users/Kush%20Tejani/Downloads/backtest/nifty-quant-suite/option-selling/nifty_weekly_master.py).
 
 ---
 
@@ -20,39 +20,39 @@ This document provides a comprehensive, itemized reference for every trading cas
 
 ---
 
-## 🛡️ Global Risk Shields (Runs Every Cycle)
+## 🛡️ Global Risk Shields (Runs Every 300s Loop)
 
-Regardless of the day or active trade type, the strategy executes a security monitor on every loop tick (300s):
+The strategy monitors these risk parameters on every loop tick:
 
 ### 1. Global Weekly Circuit Breaker
-* **Trigger Condition**: Accumulated weekly loss exceeds $3.0 \times$ the average weekly premium.
-  $$\text{weekly\_pnl} < -(\text{WEEKLY\_SL\_MULT} \times \text{AVG\_WEEKLY\_PREM}) = -\text{Rs. } 97,500$$
+* **Trigger Condition**: Accumulated weekly loss exceeds `3.0x` the average weekly premium:
+  `weekly_pnl < -(WEEKLY_SL_MULT * AVG_WEEKLY_PREM) = -Rs. 97,500`
 * **Action**:
-  1. Immediately squares off all active slots (`carry_trade`, `monday_trade`, `tuesday_trade`) by placing opposite market orders.
+  1. Squares off all active slots (`carry_trade`, `monday_trade`, `tuesday_trade`) with market orders.
   2. Sets `week_blocked = True` in state.
-  3. Halts all strategy actions and entries for the remainder of the trading week.
+  3. Halts all strategy entries for the remainder of the week.
 
 ### 2. Hard ITM Breach Exit
-Active positions are monitored against extreme spot moves to prevent tail risk:
+Active positions are monitored against spot index moves to prevent tail risk:
 * **Butterfly / Straddle (Neutral ATM short-based)**:
-  * Hard exit triggered if the Nifty Spot shifts $\ge 50$ points away from the initial entry strike:
-    $$\text{Spot} > \text{strike} + 50 \quad \text{OR} \quad \text{Spot} < \text{strike} - 50$$
+  * Hard exit if Nifty Spot shifts `>= 50` points away from the entry strike:
+    `Spot > strike + 50` OR `Spot < strike - 50`
 * **Iron Condor / Batman (OTM short-based)**:
-  * Hard exit triggered if the Nifty Spot touches or crosses the outer short strikes (defined by the `short_offset` parameter):
-    $$\text{Spot} > \text{strike} + \text{short\_offset} \quad \text{OR} \quad \text{Spot} < \text{strike} - \text{short\_offset}$$
+  * Hard exit if Nifty Spot touches or crosses the short strikes:
+    `Spot > strike + short_offset` OR `Spot < strike - short_offset`
 * **Capped Call Ratio Spread**:
-  * Hard exit triggered only on the upside (since the downside has zero risk):
-    $$\text{Spot} > \text{strike} + \text{short\_offset}$$
+  * Hard exit triggered only on the upside:
+    `Spot > strike + short_offset`
 * **Capped Put Ratio Spread**:
-  * Hard exit triggered only on the downside (since the upside has zero risk):
-    $$\text{Spot} < \text{strike} - \text{short\_offset}$$
+  * Hard exit triggered only on the downside:
+    `Spot < strike - short_offset`
 
-### 3. Premium-Based Trailing Stop Loss
-* **Carry Trade SL**: Exits the position if the net PnL drops to $\le -1.5\times$ of the premium collected credit.
-* **Monday Trade SL**: Exits the position if the net PnL drops to $\le -1.2\times$ of the premium collected credit.
-* **Tuesday Trade SL**: Tuesday trades do not have an automated premium-based stop loss; they are designed to be ridden to expiry or managed by rolls.
-* **Data Lag Safeguard**: If any active option contract quote returns $\le 0$, the premium SL evaluation is skipped for that cycle to prevent false/panic exits due to broker data feed lag.
-* *Note: Take Profit (TP) auto-exits are disabled to allow the user to manage profit capture manually.*
+### 3. Premium-Based Stop Loss
+* **Carry Trade SL**: Exits if Net PnL drops to `<= -1.5x` of the premium collected credit.
+* **Monday Trade SL**: Exits if Net PnL drops to `<= -1.2x` of the premium collected credit.
+* **Tuesday Trade SL**: Tuesday trades do not have an automated stop loss; they are managed by rolls or squared off at EOD.
+* **Data Lag Safeguard**: If any active contract LTP returns `<= 0`, the premium SL check is skipped for that cycle.
+* *Note: Take Profit (TP) auto-exits are disabled to allow for manual profit management.*
 
 ---
 
@@ -79,11 +79,11 @@ gantt
 
 ## 🟢 Wednesday — Regime-Based Carry Trade (Overnight)
 
-* **Pre-requisite Gate**: India VIX must be $\ge 13$ (prevents entering when options lack theta edge).
-* **Execution Window**: Triggers between `15:15` and `15:30` (EOD window) for ranging structures. Trend-following ratio spreads can trigger **anytime** (09:15 - 15:30) if dynamic momentum matches.
-* **Day-Start Anchoring**: PCR and Spot are recorded at the start of the day to compute:
-  * $\text{spot\_shift} = \text{Spot} - \text{morning\_spot}$
-  * $\text{pcr\_shift} = \text{PCR} - \text{morning\_pcr}$
+* **Pre-requisite Gate**: India VIX must be `>= 13` (ensures premium volatility edge).
+* **Execution Window**: Triggers between `15:15` and `15:30` (EOD) for ranging structures. Trend ratio spreads trigger **anytime** (`09:15` - `15:30`) if momentum is confirmed.
+* **Shift Formulas**:
+  * `spot_shift = Spot - morning_spot`
+  * `pcr_shift = PCR - morning_pcr`
 
 ### Wednesday Entry Decision Tree
 
@@ -115,32 +115,26 @@ flowchart TD
     I -- "-150 < spot_shift < +150\n(Neutral)" --> I3["✅ Wide Iron Condor\nShorts: Spot ±300\nHedges: Spot ±500\nSL boundary: ±300 pts"]
 ```
 
-### Wednesday Strategy Selection Matrix
+### Strategy Selection Table
 
-| Regime & ADX | IV Regime | Spot / PCR Momentum Shifts | Trade Setup Deployed | Strikes & Leg Construction | Safety Breach Boundary (`short_offset`) |
+| ADX Trend Regime | VIX / IVR Gate | Momentum trigger | Setup Deployed | Shorts & Hedges Placement | Safety short_offset |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Ranging (Regime 1)**<br>$\text{ADX} < 22$ | **High IV**<br>$\text{IVR} \ge 40$ | EOD window only (no momentum required) | **Batman Iron Condor** (1x Size) | **Shorts**: OTM5 CE / PE (Spot $\pm 250$)<br>**Hedges**: OTM10 CE / PE (Spot $\pm 500$) | $\pm 250$ pts (`5 * STRIKE_STEP`) |
-| **Ranging (Regime 2)**<br>$\text{ADX} < 22$ | **Medium IV**<br>$30 \le \text{IVR} < 40$ | EOD window only (no momentum required) | **Wide Iron Condor** (1x Size) | **Shorts**: OTM6 CE / PE (Spot $\pm 300$)<br>**Hedges**: OTM10 CE / PE (Spot $\pm 500$) | $\pm 300$ pts (`6 * STRIKE_STEP`) |
-| **Ranging (Skip)**<br>$\text{ADX} < 22$ | **Low IV**<br>$\text{IVR} < 30$ | EOD window | **No Trade (Skipped)** | Skip due to low premium edge | N/A |
-| **Grey Zone (Regime 1.5)**<br>$22 \le \text{ADX} < 25$ | Any IV | EOD window only | **Ultra-Wide Iron Condor** (1x Size) | **Shorts**: OTM7 CE / PE (Spot $\pm 350$)<br>**Hedges**: OTM12 CE / PE (Spot $\pm 600$) | $\pm 350$ pts (`7 * STRIKE_STEP`) |
-| **Trending (Regime 3)**<br>$\text{ADX} \ge 25$ | Any IV | $\text{spot\_shift} \ge +50$ pts<br>$\text{pcr\_shift} > +0.15$ | **Capped Call Ratio Spread** (1x/2x Size) | **Long**: 1x OTM3 CE (Spot $+ 150$)<br>**Short**: 2x OTM7 CE (Spot $+ 350$)<br>**Long**: 1x OTM13 CE (Spot $+ 650$) | Upside: $+350$ pts (`7 * STRIKE_STEP`) |
-| **Trending (Regime 4)**<br>$\text{ADX} \ge 25$ | Any IV | $\text{spot\_shift} \le -50$ pts<br>$\text{pcr\_shift} < -0.15$ | **Capped Put Ratio Spread** (1x/2x Size) | **Long**: 1x OTM3 PE (Spot $- 150$)<br>**Short**: 2x OTM7 PE (Spot $- 350$)<br>**Long**: 1x OTM13 PE (Spot $- 650$) | Downside: $-350$ pts (`7 * STRIKE_STEP`) |
-| **EOD Fallback (Bullish)**<br>$\text{ADX} \ge 25$ | Any IV | $\text{spot\_shift} \ge +150$ pts | **Skewed Iron Condor** (1x Size) | **Shorts**: OTM5 PE / OTM7 CE (Spot $-250$ / Spot $+350$)<br>**Hedges**: OTM9 PE / OTM11 CE (Spot $-450$ / Spot $+550$) | $\pm 350$ pts (`7 * STRIKE_STEP`) |
-| **EOD Fallback (Bearish)**<br>$\text{ADX} \ge 25$ | Any IV | $\text{spot\_shift} \le -150$ pts | **Skewed Iron Condor** (1x Size) | **Shorts**: OTM7 PE / OTM5 CE (Spot $-350$ / Spot $+250$)<br>**Hedges**: OTM11 PE / OTM9 CE (Spot $-550$ / Spot $+450$) | $\pm 350$ pts (`7 * STRIKE_STEP`) |
-| **EOD Fallback (Neutral)**<br>$\text{ADX} \ge 25$ | Any IV | $-150 < \text{spot\_shift} < +150$ pts | **Wide Iron Condor** (1x Size) | **Shorts**: OTM6 CE / PE (Spot $\pm 300$)<br>**Hedges**: OTM10 CE / PE (Spot $\pm 500$) | $\pm 300$ pts (`6 * STRIKE_STEP`) |
+| **Ranging** ($\text{ADX} < 22$) | $\text{IVR} \ge 40$ | EOD window | **Batman IC** | Shorts $\pm 250$ pts (OTM5) \| Hedges $\pm 500$ pts (OTM10) | $\pm 250$ pts |
+| **Ranging** ($\text{ADX} < 22$) | $30 \le \text{IVR} < 40$ | EOD window | **Wide IC** | Shorts $\pm 300$ pts (OTM6) \| Hedges $\pm 500$ pts (OTM10) | $\pm 300$ pts |
+| **Grey Zone** ($22 \le \text{ADX} < 25$) | Any | EOD window | **Ultra-Wide IC** | Shorts $\pm 350$ pts (OTM7) \| Hedges $\pm 600$ pts (OTM12) | $\pm 350$ pts |
+| **Trending** ($\text{ADX} \ge 25$) | Any | Spot $+50$ \| PCR $+0.15$ | **Call Ratio Butterfly** | Long OTM3 CE \| 2x Short OTM7 CE \| Long OTM13 CE | $+350$ pts |
+| **Trending** ($\text{ADX} \ge 25$) | Any | Spot $-50$ \| PCR $-0.15$ | **Put Ratio Butterfly** | Long OTM3 PE \| 2x Short OTM7 PE \| Long OTM13 PE | $-350$ pts |
+| **EOD Skewed Bull** | Any | Spot shift $\ge +150$ | **Skewed IC (Bull)** | Shorts: PE OTM5 / CE OTM7 \| Hedges: PE OTM9 / CE OTM11 | $\pm 350$ pts |
+| **EOD Skewed Bear** | Any | Spot shift $\le -150$ | **Skewed IC (Bear)** | Shorts: PE OTM7 / CE OTM5 \| Hedges: PE OTM11 / CE OTM9 | $\pm 350$ pts |
 
 ---
 
 ## 🔵 Monday — Weekend Gap Player (Adaptive IC)
 
-* **Execution Window**: Entry is scanned between `10:00` and `11:15` to allow early morning gap volatility to settle.
-* **Pre-requisite Entry Gates**:
-  1. VIX must be $\ge 13$.
-  2. IVR must be $\ge 30$.
-  3. Carry trade PnL check: If the Wednesday carry trade is still active, it must not be in a loss state ($\ge 0$).
-* **Weekend Gap Calculation**:
-  $$\text{gap\_pct} = \frac{|\text{Monday Open} - \text{Friday Close}|}{\text{Friday Close}} \times 100$$
-  *(Note: Friday close is anchored between `15:20` and `15:26` on Friday afternoon).*
+* **Execution Window**: Enters between `10:00` and `11:15` to let gap volatility settle.
+* **Gates**: VIX `>= 13`, IVR `>= 30`, and Carry Trade PnL `>= 0` (if active).
+* **Weekend Gap formula**:
+  `gap_pct = (|Monday Open - Friday Close| / Friday Close) * 100`
 
 ### Monday Decision Rules
 
@@ -165,19 +159,14 @@ flowchart TD
 
 ## 🟡 Tuesday — Expiry Machine (Smart Adaptive IC)
 
-* **Execution Window**: Entry scanned between `09:20` and `12:00`.
-* **Pre-requisite Entry Gates**:
-  1. VIX must be within the safe range: $11 \le \text{VIX} \le 22$.
-  2. The gap between Monday's Close and Tuesday's Spot must be $\le 1.0\%$:
-     $$\text{gap\_pct} = \frac{|\text{Tuesday Spot} - \text{Monday Close}|}{\text{Monday Close}} \times 100 \le 1.0\%$$
+* **Execution Window**: Entry checked between `09:20` and `12:00`.
+* **Gates**: $11 \le \text{VIX} \le 22$ and overnight gap vs Monday's Close `<= 1.0%`.
 
 ### 1. Smart Entry Selection
-Instead of selling fixed strikes, the script dynamically scans Nifty Option Chain premiums:
-* **Search Method**: Iterates through strikes starting from `OTM6` outwards to `OTM15` on both Call (CE) and Put (PE) sides.
-* **Premium Target Band**: Finds the first strike whose current Last Traded Price (LTP) is between **10 Rs** and **25 Rs**:
-  $$10 \le \text{Option Premium} \le 25$$
-* **Hedge Placement**: Fixed hedges are placed exactly **2 strikes away** (100 points) from the chosen short strikes.
-* **Position Size**: Standard `1x` Lot Size.
+* **Search Method**: Scans option strikes from OTM6 outwards to OTM15.
+* **Premium Target Band**: Finds the first strike on each side with LTP in this range:
+  `10 <= Option Premium <= 25`
+* **Hedge Placement**: Placed exactly 2 strikes away (100 points) from chosen shorts.
 
 ### 2. Tuesday Full Lifecycle Decision Tree
 
@@ -214,49 +203,33 @@ flowchart TD
     I -- No roll trigger --> G
 ```
 
-### 3. Active Expiry Adjustment & Rolling Logic (09:20 - 14:50)
-The strategy actively tracks the short legs and initiates adjustments for premium recovery or defense:
+### 3. Active Expiry Rolling Logic (09:20 - 14:50)
 
-* **Case A: Profit Roll (Decay Capture)**
-  * **Trigger**: A short leg decays by **$\ge 80\%$** of its entry premium:
-    $$\frac{\text{Entry Price} - \text{Current Price}}{\text{Entry Price}} \ge 0.80$$
-  * **Action**:
-    1. Immediately buys back (closes) that decaying short leg and sells its hedge.
-    2. Scans for a new short strike on the **same side** within a tighter premium band of **10 Rs to 18 Rs**.
-    3. Deploys the new short strike + hedge (2 strikes away), locking in more premium.
-
-* **Case B: Defensive Roll (Threat Mitigation)**
-  * **Trigger**: A short leg spikes to **$\ge 3.0\times$** its entry premium (being tested/breached):
-    $$\frac{\text{Current Price}}{\text{Entry Price}} \ge 3.0$$
-  * **Action**:
-    1. Instantly closes the threatened short leg and hedge at a loss.
-    2. Rolls the position further away by scanning for a safer strike on the **same side** in the **10 Rs to 18 Rs** premium band.
-    3. Deploys the new short strike + hedge (2 strikes away).
-  
-  *(Note: If no strike can be found in the 10-18 Rs premium band during either roll, that side remains closed, and the strategy continues with a single-sided position).*
-
-### 4. Expiry Termination
-* **Condition**: Time reaches `14:55` or later.
-* **Action**: Force squares off the entire position via a basket order to avoid delivery risks or late-stage gamma spikes.
+* **Profit Roll (Capture Decay)**:
+  * **Trigger**: A short leg value decays by `>= 80%`:
+    `(Entry Price - Current Price) / Entry Price >= 0.80`
+  * **Action**: Closes that decaying short + hedge, and rolls same-side strike to collect new premium in the **10 Rs to 18 Rs** band.
+* **Defensive Roll (Mitigate Threat)**:
+  * **Trigger**: A short leg spikes to `>= 3.0x` its entry premium:
+    `Current Price / Entry Price >= 3.0`
+  * **Action**: Closes the threatened legs at a loss, and rolls same-side strike further away into the safer **10 Rs to 18 Rs** premium band.
+* **Expiry Force Square-off**: Closes all remaining legs at `14:55` to avoid overnight delivery risk.
 
 ---
 
 ## 📊 Position Greeks Tracking
 
-Greeks are calculated dynamically every cycle using the Black-Scholes pricing model with:
-* Risk-Free Interest Rate ($r$): $6.5\%$ (`0.065`)
-* Days to Expiry ($t$): $\frac{\text{days}}{365.0}$ (computed relative to `expiry_date`)
-* Volatility ($\sigma$): Current India VIX LTP
+Greeks are dynamically aggregated every cycle using Black-Scholes pricing with a risk-free rate of `6.5%` and VIX volatility:
 
-$$\Delta_{\text{Total}} = \sum (\Delta_{\text{leg}} \times \text{Multiplier}) \quad \Theta_{\text{Total}} = \sum (\Theta_{\text{leg}} \times \text{Multiplier}) \quad \mathcal{V}_{\text{Total}} = \sum (\mathcal{V}_{\text{leg}} \times \text{Multiplier})$$
+`Delta_Total = sum(Delta_leg * Multiplier) | Theta_Total = sum(Theta_leg * Multiplier) | Vega_Total = sum(Vega_leg * Multiplier)`
 
-* *Multiplier = Qty for long legs (BUY) or -Qty for short legs (SELL).*
-* Delta ($\Delta$), Theta ($\text{Theta}$), and Vega ($\text{Vega}$) values are aggregated across all active legs and written to [nifty_master_state.json](file:///c:/Users/Kush%20Tejani/Downloads/openalgo_v2.1/openalgo/nifty_master_state.json).
+* *Multiplier is positive (+Qty) for long positions and negative (-Qty) for short positions.*
+* Values are written to `nifty_master_state.json`.
 
 ---
 
-## 📈 System Files & Logging Architecture
+## 📈 Logging Architecture
 
-* **State Manager**: [nifty_master_state.json](file:///c:/Users/Kush%20Tejani/Downloads/openalgo_v2.1/openalgo/nifty_master_state.json) tracks slot states, weekly stats, greeks, and rolling signals in real-time.
-* **Audit Logger**: [nifty_master_audit.csv](file:///c:/Users/Kush%20Tejani/Downloads/openalgo_v2.1/openalgo/nifty_master_audit.csv) stores chronological records of decisions, gate checks, and skips.
-* **Trade Journal**: [nifty_master_trades.csv](file:///c:/Users/Kush%20Tejani/Downloads/openalgo_v2.1/openalgo/nifty_master_trades.csv) registers entries, exits, realized PnLs, VIX, PCR, and spot level parameters at trade execution time.
+* **State**: [nifty_master_state.json](file:///c:/Users/Kush%20Tejani/Downloads/backtest/nifty-quant-suite/option-selling/nifty_master_state.json) logs runtime state and Greeks.
+* **Audit**: [nifty_master_audit.csv](file:///c:/Users/Kush%20Tejani/Downloads/backtest/nifty-quant-suite/option-selling/nifty_master_audit.csv) stores chronological records of decisions and gates.
+* **Journal**: [nifty_master_trades.csv](file:///c:/Users/Kush%20Tejani/Downloads/backtest/nifty-quant-suite/option-selling/nifty_master_trades.csv) registers entries, exits, realized PnLs, and market indicators.
