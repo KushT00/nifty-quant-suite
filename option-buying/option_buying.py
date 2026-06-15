@@ -23,7 +23,7 @@ from openalgo import api
 # ============================================================
 # 1. PARAMETERS & CONFIG
 # ============================================================
-API_KEY          = "ff1d258f2c5d48bf87292b3f055b39772ca76f4afe69ff7c7c5fa121a32334d8"
+API_KEY          = os.getenv("OPENALGO_API_KEY", "")
 HOST             = "http://127.0.0.1:5000"
 
 UNDERLYING       = "NIFTY"
