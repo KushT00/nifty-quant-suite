@@ -5,16 +5,18 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime, time, timedelta
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # ==========================================
 # 1. Backtest Configurations & Settings
 # ==========================================
 CONFIG = {
     # File Paths
-    'spot_path': 'c:/Users/Kush Tejani/Downloads/backtest/NIFTY_NSE_INDEX_5m.csv',
-    'vix_path': 'c:/Users/Kush Tejani/Downloads/backtest/vix.csv',
-    'trade_log_filename': 'c:/Users/Kush Tejani/Downloads/backtest/trade_log.csv',
-    'equity_curve_filename': 'c:/Users/Kush Tejani/Downloads/backtest/equity_curve.png',
-    'report_filename': 'c:/Users/Kush Tejani/Downloads/backtest/report.html',
+    'spot_path': os.path.join(SCRIPT_DIR, 'data', 'NIFTY_NSE_INDEX_5m.csv'),
+    'vix_path': os.path.join(SCRIPT_DIR, 'data', 'vix.csv'),
+    'trade_log_filename': os.path.join(SCRIPT_DIR, 'trade_log.csv'),
+    'equity_curve_filename': os.path.join(SCRIPT_DIR, 'equity_curve.png'),
+    'report_filename': os.path.join(SCRIPT_DIR, 'report.html'),
     
     # Capital Settings
     'initial_capital': 50000.0,       # Rs. 50,000 initial capital
