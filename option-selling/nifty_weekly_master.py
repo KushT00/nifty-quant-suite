@@ -24,7 +24,7 @@ from openalgo import api
 # ============================================================
 # 1. PARAMETERS & CONFIG
 # ============================================================
-API_KEY          = os.getenv("OPENALGO_API_KEY", "")
+API_KEY          = "ff1d258f2c5d48bf87292b3f055b39772ca76f4afe69ff7c7c5fa121a32334d8"
 HOST             = "http://127.0.0.1:5000"
 
 UNDERLYING       = "NIFTY"
@@ -224,6 +224,30 @@ def calculate_ivr(client, state, vix_ltp):
         return 25.0
 
 
+def get_morning_spot(client, current_ltp):
+    """Fetch open of first 5-min candle of today using client.history."""
+    try:
+        today_str = date.today().strftime("%Y-%m-%d")
+        hist = client.history(symbol=UNDERLYING, exchange=EXCHANGE_INDEX, interval="5m",
+                             start_date=today_str, end_date=today_str)
+
+        if hasattr(hist, "to_dict"):
+            candles = hist.to_dict("records")
+        else:
+            candles = hist if isinstance(hist, list) else hist.get("data", [])
+
+        if candles:
+            first_open = float(candles[0]["open"])
+            print(f"[Morning Spot] First 5m candle open: {first_open}")
+            return first_open
+
+        print(f"[Morning Spot] No candles found for {today_str}. Using LTP: {current_ltp}")
+        return current_ltp
+    except Exception as e:
+        print(f"[Morning Spot Error] {e}. Using LTP: {current_ltp}")
+        return current_ltp
+
+
 # ============================================================
 # 2b. DECISION AUDIT & TRADE JOURNAL
 # ============================================================
@@ -363,6 +387,7 @@ def load_state():
         "monday_close": 0.0,
         "morning_pcr": 0.0,
         "morning_pcr_date": "",
+        "morning_spot": 0.0,
         "weekly_limit": 0,
         "adjustment_signals": [],
         "market_data": {"vix": 0, "ivr": 0, "adx": 0, "pcr": 1.0, "nifty_ltp": 0},
@@ -376,6 +401,184 @@ def save_state(state):
     state["last_eval"] = datetime.now().strftime("%H:%M:%S")
     with open(STATE_FILE, "w") as f:
         json.dump(state, f, indent=2)
+
+def sync_positions_with_broker(client, state):
+    """
+    Startup & Runtime Position Sync:
+    Query client.positionbook() to check if all legs of any active trades (carry_trade,
+    monday_trade, tuesday_trade) actually exist as open positions at the broker.
+    If ANY leg of an active slot is missing or has a quantity of 0, clear that slot in state.
+    Also alerts if there are other unmanaged Nifty positions at the broker.
+    """
+    try:
+        pos_res = client.positionbook()
+        
+        # Extract the list of positions depending on the response type
+        broker_positions = []
+        if isinstance(pos_res, list):
+            broker_positions = pos_res
+        elif isinstance(pos_res, dict):
+            broker_positions = pos_res.get("data", [])
+        
+        # Build set of open symbols with non-zero quantities at the broker
+        open_broker_symbols = set()
+        nifty_broker_symbols = set()
+        for pos in broker_positions:
+            symbol = pos.get("symbol")
+            qty = pos.get("quantity", 0)
+            if symbol and qty != 0:
+                sym_upper = symbol.strip().upper()
+                open_broker_symbols.add(sym_upper)
+                if sym_upper.startswith("NIFTY"):
+                    nifty_broker_symbols.add(sym_upper)
+        
+        # Keep track of legs the strategy expects to be active
+        strategy_active_symbols = set()
+        sync_happened = False
+        
+        for slot_key in ["carry_trade", "monday_trade", "tuesday_trade"]:
+            slot = state.get(slot_key)
+            if slot and slot.get("active"):
+                legs = slot.get("legs", [])
+                if not legs:
+                    print(f"[SYNC] {slot_key} is active but has no legs in state. Clearing slot.")
+                    log_decision(state, slot_key, "SYNC_CLEAR", "Active slot has no legs in state")
+                    state[slot_key] = empty_slot()
+                    sync_happened = True
+                    continue
+                
+                missing_legs = []
+                for leg in legs:
+                    sym = leg.get("symbol")
+                    if sym:
+                        sym_upper = sym.strip().upper()
+                        strategy_active_symbols.add(sym_upper)
+                        if sym_upper not in open_broker_symbols:
+                            missing_legs.append(sym)
+                
+                if missing_legs:
+                    print(f"[SYNC] {slot_key} cleared — missing/closed legs at broker: {missing_legs}")
+                    log_decision(state, slot_key, "SYNC_CLEAR", f"Manual square-off detected at broker: missing legs {missing_legs}")
+                    state[slot_key] = empty_slot()
+                    sync_happened = True
+        
+        # Detect unmanaged Nifty positions
+        unmanaged = nifty_broker_symbols - strategy_active_symbols
+        if unmanaged:
+            print(f"[WARNING] Unmanaged Nifty positions found at broker: {list(unmanaged)}")
+            print("          (These positions are NOT being tracked or managed by this strategy script.)")
+            
+        return sync_happened
+                    
+    except Exception as e:
+        print(f"[SYNC ERROR] Failed to sync positions with broker: {e}")
+        return False
+
+
+def get_thinking_process(state, day, t_str, ltp, vix, ivr, adx, pcr, client):
+    """
+    Derives a human-readable explanation of what the script is currently thinking,
+    waiting for, or why it skipped a trade.
+    """
+    # 1. Check if week is blocked
+    if state.get("week_blocked"):
+        return "WEEK BLOCKED: Global weekly circuit breaker was hit. Strategy is suspended."
+        
+    # 2. Check active slots
+    active_slots = []
+    for k in ["carry_trade", "monday_trade", "tuesday_trade"]:
+        if state.get(k, {}).get("active"):
+            active_slots.append(k)
+            
+    # 3. Monday (Day 0) logic explanation
+    if day == 0:
+        slot = state.get("monday_trade", {})
+        if slot.get("active"):
+            legs_str = ", ".join([f"{l['action']} {l['symbol']}" for l in slot.get("legs", [])])
+            return f"Monday trade is ACTIVE: {slot.get('type')} centered at {slot.get('strike')}. Legs: [{legs_str}]. Monitoring exit rules."
+        
+        # If not active:
+        if t_str < "10:00":
+            return "Day is Monday. Waiting for weekend gap to settle. Entry window starts at 10:00."
+        elif "10:00" <= t_str <= "11:15":
+            # Let's fetch Friday close to check what the gap was
+            fri_close = state.get("friday_close", 0)
+            if fri_close <= 0:
+                try:
+                    res_data = client.quotes(exchange=EXCHANGE_INDEX, symbol=UNDERLYING)
+                    fri_close = float(res_data.get("data", {}).get("prev_close", ltp))
+                except:
+                    fri_close = 0
+            
+            if fri_close > 0:
+                try:
+                    res_data = client.quotes(exchange=EXCHANGE_INDEX, symbol=UNDERLYING)
+                    open_price = float(res_data.get("data", {}).get("open", ltp))
+                    gap_pct = abs(open_price - fri_close) / fri_close * 100
+                except:
+                    gap_pct = 0.0
+                
+                # Check gates
+                if gap_pct > 0.7:
+                    return f"Day is Monday. Skipping Monday trade: Weekend Gap ({gap_pct:.2f}%) is > 0.7%."
+                elif adx > 24:
+                    return f"Day is Monday. Skipping Monday trade: ADX ({adx:.1f}) is > 24 (Strong trend, range-bound IC is unsafe)."
+                elif vix < 13:
+                    return f"Day is Monday. Skipping Monday trade: VIX ({vix:.1f}) is < 13."
+                elif ivr < 30:
+                    return f"Day is Monday. Skipping Monday trade: IVR ({ivr:.0f}) is < 30."
+            return "Day is Monday. Evaluating entry gates for Standard/Ultra-Wide Iron Condor..."
+        else:
+            return "Day is Monday. Entry window (10:00 - 11:15) has closed. No trade was entered today."
+
+    # 4. Tuesday (Day 1) logic explanation
+    elif day == 1:
+        slot = state.get("tuesday_trade", {})
+        if slot.get("active"):
+            legs_str = ", ".join([f"{l['action']} {l['symbol']}" for l in slot.get("legs", [])])
+            return f"Tuesday (Expiry) trade is ACTIVE: {slot.get('type')}. Legs: [{legs_str}]. Monitoring rolls and 15:10 final expiry exit."
+            
+        # If not active:
+        if t_str < "09:20":
+            return "Day is Tuesday. Waiting for market open volatility to settle. Entry window starts at 09:20."
+        elif "09:20" <= t_str <= "12:00":
+            if vix < 11 or vix > 22:
+                return f"Day is Tuesday. Skipping expiry play: VIX ({vix:.1f}) is out of safe range (11.0 - 22.0)."
+            return "Day is Tuesday. Scanning strikes in the 10-25 Rs premium band for Expiry Condor entry..."
+        else:
+            return "Day is Tuesday. Expiry entry window (09:20 - 12:00) has closed. No expiry trade entered."
+
+    # 5. Wednesday/Thursday/Friday (Day 2, 3, 4) carry trade logic explanation
+    elif day in [2, 3, 4]:
+        slot = state.get("carry_trade", {})
+        if slot.get("active"):
+            legs_str = ", ".join([f"{l['action']} {l['symbol']}" for l in slot.get("legs", [])])
+            return f"Carry trade is ACTIVE: {slot.get('type')} ({slot.get('bias', 'NEUTRAL')} bias) centered at {slot.get('strike')}. Legs: [{legs_str}]. Monitoring exit rules."
+            
+        # If not active:
+        day_names = {2: "Wednesday", 3: "Thursday", 4: "Friday"}
+        day_name = day_names[day]
+        
+        if vix < 13:
+            return f"Day is {day_name}. Skipping carry entry: VIX ({vix:.1f}) is < 13 (no premium edge)."
+        
+        if adx < 22:
+            if "15:15" <= t_str <= "15:30":
+                return f"Day is {day_name}. EOD window active. Evaluating Neutral carry entry (Batman or Wide IC) due to ranging market (ADX={adx:.1f})."
+            else:
+                return f"Day is {day_name}. Ranging market detected (ADX={adx:.1f}). Waiting for 15:15 EOD window to enter carry trade."
+        elif 22 <= adx < 25:
+            if "15:15" <= t_str <= "15:30":
+                return f"Day is {day_name}. EOD window active. Evaluating Ultra-Wide IC entry due to grey zone market (ADX={adx:.1f})."
+            else:
+                return f"Day is {day_name}. Grey zone market detected (ADX={adx:.1f}). Waiting for 15:15 EOD window to enter carry trade."
+        else: # adx >= 25 (trending)
+            if "15:15" <= t_str <= "15:30":
+                return f"Day is {day_name}. EOD window active. Evaluating Skewed IC or Neutral carry entry fallback for trending market (ADX={adx:.1f})."
+            else:
+                return f"Day is {day_name}. Trending market detected (ADX={adx:.1f}). Waiting for momentum confirmation (Spot shift >= 50, PCR shift > 0.15) or EOD window."
+
+    return "Engine is active. Monitoring market conditions."
 
 # ============================================================
 # 4. ORDER & RISK TOOLS
@@ -861,9 +1064,9 @@ def _deploy_grey_zone_ic(state, atm, expiry, client):
 def _deploy_call_ratio(state, atm, expiry, client):
     """Call Ratio Spread: Buy 1x OTM3 CE, Sell 2x OTM7 CE, Buy 1x OTM15 CE (base 1 lot). Net credit structure."""
     multi_legs = [
-        {"offset": "OTM3", "option_type": "CE", "action": "BUY", "quantity": LOT_SIZE, "product": PRODUCT},
-        {"offset": "OTM7", "option_type": "CE", "action": "SELL", "quantity": LOT_SIZE * 2, "product": PRODUCT},
-        {"offset": "OTM15", "option_type": "CE", "action": "BUY", "quantity": LOT_SIZE, "product": PRODUCT},
+        {"offset": "OTM4", "option_type": "CE", "action": "BUY", "quantity": LOT_SIZE, "product": PRODUCT},
+        {"offset": "OTM15", "option_type": "CE", "action": "BUY", "quantity": LOT_SIZE*2, "product": PRODUCT},
+        {"offset": "OTM7", "option_type": "CE", "action": "SELL", "quantity": LOT_SIZE * 3, "product": PRODUCT},
     ]
     res = client.optionsmultiorder(strategy="WED_BEAR", underlying=UNDERLYING,
                                    exchange=EXCHANGE_INDEX, expiry_date=expiry, legs=multi_legs)
@@ -891,11 +1094,12 @@ def _deploy_call_ratio(state, atm, expiry, client):
 
 
 def _deploy_put_ratio(state, atm, expiry, client):
-    """Put Ratio Spread: Buy 1x OTM3 PE, Sell 2x OTM7 PE, Buy 1x OTM15 PE (base 1 lot). Net credit structure."""
+    """CALL Ratio Spread: Buy 1x OTM4 CE, Sell 2x OTM7 CE, Buy 1x OTM15 CE (base 1 lot). Net credit structure."""
     multi_legs = [
-        {"offset": "OTM3", "option_type": "PE", "action": "BUY", "quantity": LOT_SIZE, "product": PRODUCT},
-        {"offset": "OTM7", "option_type": "PE", "action": "SELL", "quantity": LOT_SIZE * 2, "product": PRODUCT},
-        {"offset": "OTM15", "option_type": "PE", "action": "BUY", "quantity": LOT_SIZE, "product": PRODUCT}
+        {"offset": "OTM4", "option_type": "CE", "action": "BUY", "quantity": LOT_SIZE, "product": PRODUCT},
+        {"offset": "OTM15", "option_type": "CE", "action": "BUY", "quantity": LOT_SIZE*2, "product": PRODUCT},
+        {"offset": "OTM7", "option_type": "CE", "action": "SELL", "quantity": LOT_SIZE * 3, "product": PRODUCT},
+
     ]
     res = client.optionsmultiorder(strategy="WED_BULL", underlying=UNDERLYING,
                                    exchange=EXCHANGE_INDEX, expiry_date=expiry, legs=multi_legs)
@@ -1198,15 +1402,29 @@ def run():
     print(f"    Loop  : 300s (5min)")
     print(f"    Lot   : {LOT_SIZE} qty")
 
+    # Startup Position Sync
+    try:
+        state = load_state()
+        sync_positions_with_broker(client, state)
+        save_state(state)
+    except Exception as e:
+        print(f"[SYNC ERROR] Startup position sync failed: {e}")
+
     while True:
         try:
             state = load_state()
+            
+            # Sync positions with broker in case of manual square-offs
+            if sync_positions_with_broker(client, state):
+                save_state(state)
+                
             now = datetime.now()
             t_str = now.strftime("%H:%M")
             day = now.weekday()  # 0=Mon, 1=Tue, 3=Thu, 4=Fri
 
             # Skip outside market hours (09:15 - 15:30)
             if not ("09:15" <= t_str <= "15:30"):
+                print(f"[{t_str}] Outside market hours (09:15 - 15:30). Engine is sleeping.")
                 save_state(state)
                 time.sleep(300)
                 continue
@@ -1236,7 +1454,7 @@ def run():
             # Record morning stats on first eval of the day (for intraday shift calc)
             if state.get("morning_pcr_date") != str(date.today()):
                 state["morning_pcr"] = pcr
-                state["morning_spot"] = ltp
+                state["morning_spot"] = get_morning_spot(client, ltp)
                 state["morning_pcr_date"] = str(date.today())
 
             state["market_data"] = {"vix": vix, "ivr": ivr, "adx": adx, "pcr": pcr, "nifty_ltp": ltp}
@@ -1276,7 +1494,23 @@ def run():
             
             state["adjustment_signals"] = all_signals
 
-            print(f"[{t_str}] Day={day} | Nifty={ltp} | VIX={vix:.1f} | IVR={ivr:.0f} | ADX={adx:.1f} | PCR={pcr:.2f}")
+            status_lines = []
+            for slot_key in ["carry_trade", "monday_trade", "tuesday_trade"]:
+                slot = state[slot_key]
+                if slot.get("active"):
+                    pnl_val = slot.get("live_pnl", 0)
+                    pnl_str = f"Rs.{pnl_val:+.0f}"
+                    status_lines.append(f"{slot_key}: ACTIVE ({slot.get('type')}, PnL: {pnl_str})")
+                else:
+                    status_lines.append(f"{slot_key}: INACTIVE")
+            status_str = " | ".join(status_lines)
+
+            print("=" * 80)
+            print(f"[{t_str}] NIFTY: {ltp:.2f} | VIX: {vix:.2f} (IVR: {ivr:.1f}%) | ADX: {adx:.1f} | PCR: {pcr:.2f}")
+            print(f"[STATUS] {status_str} | Weekly PnL: Rs.{state.get('weekly_pnl', 0.0):.0f}")
+            thinking_msg = get_thinking_process(state, day, t_str, ltp, vix, ivr, adx, pcr, client)
+            print(f"[THINKING] {thinking_msg}")
+            print("=" * 80)
 
             # Hard block — no actions if week is blown
             if state["week_blocked"]:
@@ -1298,6 +1532,7 @@ def run():
                         if fri_close <= 0:
                             print("[MON] Friday close missing in state. Fetching from API...")
                             fri_close = float(res_data.get("data", {}).get("prev_close", ltp))
+                            state["friday_close"] = fri_close
                         
                         open_price = float(res_data.get("data", {}).get("open", ltp))
                         gap_pct = abs(open_price - fri_close) / fri_close * 100
