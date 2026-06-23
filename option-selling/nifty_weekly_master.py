@@ -39,6 +39,8 @@ ADX_PERIOD       = 14
 ADX_TRENDING     = 24.95
 ADX_RANGING      = 20
 GAP_THRESHOLD    = 0.5  # 0.5% Weekend Gap
+TUESDAY_VIX_MIN  = 14.0
+TUESDAY_VIX_MAX  = 22.0
 
 WEEKLY_SL_MULT   = 3.0
 AVG_WEEKLY_PREM  = 500 * LOT_SIZE
@@ -542,9 +544,9 @@ def get_thinking_process(state, day, t_str, ltp, vix, ivr, adx, pcr, client):
         if t_str < "09:20":
             return "Day is Tuesday. Waiting for market open volatility to settle. Entry window starts at 09:20."
         elif "09:20" <= t_str <= "12:00":
-            if vix < 11 or vix > 22:
-                return f"Day is Tuesday. Skipping expiry play: VIX ({vix:.1f}) is out of safe range (11.0 - 22.0)."
-            return "Day is Tuesday. Scanning strikes in the 10-25 Rs premium band for Expiry Condor entry..."
+            if vix < TUESDAY_VIX_MIN or vix > TUESDAY_VIX_MAX:
+                return f"Day is Tuesday. Skipping expiry play: VIX ({vix:.1f}) is out of safe range ({TUESDAY_VIX_MIN} - {TUESDAY_VIX_MAX})."
+            return "Day is Tuesday. Scanning strikes in the 10-25 Rs premium band (starting OTM2) for Expiry Condor entry..."
         else:
             return "Day is Tuesday. Expiry entry window (09:20 - 12:00) has closed. No expiry trade entered."
 
@@ -1223,10 +1225,10 @@ def _deploy_monday_adaptive(state, ltp, vix, ivr, expiry, client, mode="STANDARD
         print(f"[MON] {mode} Failed: {res}")
 
 
-def find_strike_by_premium(client, expiry, opt_type, target_min, target_max, start_offset=1):
+def find_strike_by_premium(client, expiry, opt_type, target_min, target_max, start_offset=2):
     """
     Scans strikes to find one within the target premium range.
-    Scans from OTM1 out to OTM15.
+    Scans from start_offset out to OTM15.
     Returns (strike_offset, premium, symbol)
     """
     ltp_res = client.quotes(exchange=EXCHANGE_INDEX, symbol=UNDERLYING)
@@ -1235,8 +1237,8 @@ def find_strike_by_premium(client, expiry, opt_type, target_min, target_max, sta
     
     atm = atm_from_ltp(ltp)
     
-    # Scan from OTM1 out to OTM15 to find the first strike that fits the premium band
-    for off in range(1, 16):
+    # Scan from start_offset out to OTM15 to find the first strike that fits the premium band
+    for off in range(start_offset, 16):
         strike = atm + (off * STRIKE_STEP) if opt_type == "CE" else atm - (off * STRIKE_STEP)
         sym = build_sym(expiry, strike, opt_type)
         q = batch_get_quotes(client, [sym])
@@ -1250,24 +1252,31 @@ def find_strike_by_premium(client, expiry, opt_type, target_min, target_max, sta
 def deploy_tuesday_ic(state, ltp, vix, gap_pct, expiry, client):
     """
     Tuesday (Expiry): Smart Adaptive Entry.
-    Starts looking at OTM6, moves closer if premiums are < 10 Rs.
+    Starts looking at OTM2, scans outwards.
     Target: 10-25 Rs per leg.
     """
-    if vix < 11 or vix > 22:
-        print(f"[TUE] VIX {vix:.1f} out of safe range (11-22). Skipping expiry play.")
+    gates = {
+        "vix_gate": {"passed": TUESDAY_VIX_MIN <= vix <= TUESDAY_VIX_MAX, "value": round(vix, 1), "threshold": f"{TUESDAY_VIX_MIN}-{TUESDAY_VIX_MAX}"},
+        "gap_gate": {"passed": gap_pct <= 1.0, "value": round(gap_pct, 2), "threshold": "<=1.0%"}
+    }
+    if vix < TUESDAY_VIX_MIN or vix > TUESDAY_VIX_MAX:
+        log_decision(state, "tuesday_trade", "SKIPPED", f"VIX {vix:.1f} out of safe range ({TUESDAY_VIX_MIN}-{TUESDAY_VIX_MAX})", gates)
+        print(f"[TUE] VIX {vix:.1f} out of safe range ({TUESDAY_VIX_MIN}-{TUESDAY_VIX_MAX}). Skipping expiry play.")
         return
     if gap_pct > 1.0:
+        log_decision(state, "tuesday_trade", "SKIPPED", f"Tuesday gap {gap_pct:.2f}% > 1.0%", gates)
         print(f"[TUE] Tuesday gap {gap_pct:.2f}% > 1.0%. Too risky. Skipping.")
         return
 
     print(f"[TUE] Starting Adaptive Entry Search...")
     
     # Find Best CE
-    ce_data = find_strike_by_premium(client, expiry, "CE", 10, 25, start_offset=6)
+    ce_data = find_strike_by_premium(client, expiry, "CE", 10, 25, start_offset=2)
     # Find Best PE
-    pe_data = find_strike_by_premium(client, expiry, "PE", 10, 25, start_offset=6)
+    pe_data = find_strike_by_premium(client, expiry, "PE", 10, 25, start_offset=2)
     
     if not ce_data or not pe_data:
+        log_decision(state, "tuesday_trade", "SKIPPED", f"Could not find both sides with 10-25 Rs premium. CE={ce_data}, PE={pe_data}", gates)
         print(f"[TUE] Could not find both sides with 10-25 Rs premium. CE={ce_data}, PE={pe_data}")
         return
 
@@ -1314,6 +1323,7 @@ def deploy_tuesday_ic(state, ltp, vix, gap_pct, expiry, client):
         "type": "CONDOR",
         "entry_time": datetime.now().isoformat()
     }
+    log_decision(state, "tuesday_trade", "DEPLOYED", f"Smart IC deployed | Prem=Rs.{total_credit:.0f}", gates)
     log_trade("tuesday_trade", "SMART_IC", "ENTRY", final_legs, total_credit, state)
     print(f"[TUE] Smart IC Deployed. Total Credit: Rs.{total_credit:.0f}")
 
@@ -1366,7 +1376,7 @@ def adjust_tuesday_expiry(state, ltp, client, expiry):
         slot["legs"] = [l for l in slot["legs"] if l["option_type"] != side]
         
         # B. Find New Strike (10-18 Rs band)
-        new_data = find_strike_by_premium(client, expiry, side, 10, 18)
+        new_data = find_strike_by_premium(client, expiry, side, 10, 18, start_offset=2)
         
         if new_data:
             off, new_p, new_sym = new_data
